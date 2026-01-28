@@ -2,59 +2,70 @@ import streamlit as st
 import yt_dlp
 import os
 import asyncio
-from moviepy.editor import VideoFileClip, CompositeVideoClip, ImageClip
+from moviepy.editor import VideoFileClip, CompositeVideoClip
 import edge_tts
 
-# Layout ပြင်ဆင်ခြင်း
-st.set_page_config(page_title="AI Myanmar Video Bot")
-st.title("🇲🇲 AI Video Editor (Myanmar Voice)")
+st.set_page_config(page_title="MM AI Video Editor", layout="wide")
+st.title("🇲🇲 MM AI Video Editor (Myanmar Voice)")
 
-# ၁။ YouTube Link ထည့်ရန်
-video_url = st.text_input("YouTube ဗီဒီယို Link ကို ဒီမှာထည့်ပါ")
+# Input URL
+url = st.text_input("YouTube ဗီဒီယို Link ကို ဒီမှာထည့်ပါ")
+ratio_choice = st.radio("ဗီဒီယို အချိုးအစား ရွေးပါ", ["16:9", "9:16", "4:5"], index=1)
 
-# ၂။ Ratio ရွေးရန်
-ratio_choice = st.radio("ဗီဒီယို အချိုးအစား ရွေးပါ", ["16:9", "9:16", "4:5"])
+def download_video(url_link):
+    # YouTube က Block တာ သက်သာအောင် header တွေ ထည့်ထားပါတယ်
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'outtmpl': 'input_video.mp4',
+        'noplaylist': True,
+        'quiet': False,
+    }
+    try:
+        if os.path.exists("input_video.mp4"):
+            os.remove("input_video.mp4")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url_link])
+        return "input_video.mp4"
+    except Exception as e:
+        st.error(f"Download Error: {e}")
+        return None
 
-# ၃။ Effect များ
-st.write("✨ 3s Play / 3s Freeze-Zoom Effect ကို Auto ထည့်ပေးပါမည်")
+async def make_voice(text, output):
+    communicate = edge_tts.Communicate(text, "my-MM-ThihaNeural")
+    await communicate.save(output)
 
-# ဗီဒီယို လုပ်ဆောင်မည့် ခလုတ်
 if st.button("ဗီဒီယို စတင်ဖန်တီးပါ"):
-    if video_url:
-        with st.status("ဗီဒီယို ပြုပြင်နေပါသည်... ခဏစောင့်ပါ"):
+    if url:
+        with st.status("ဗီဒီယိုကို ပြုပြင်နေပါသည်..."):
+            # 1. Download
+            video_file = download_video(url)
             
-            # YouTube Download ဆွဲခြင်း
-            st.write("Downloading Source Video...")
-            ydl_opts = {'format': 'best[ext=mp4]', 'outtmpl': 'input.mp4'}
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([video_url])
-            
-            # ဗီဒီယိုကို Processing လုပ်ခြင်း
-            clip = VideoFileClip("input.mp4").subclip(0, 15) # RAM မပြည့်စေရန် ၁၅ စက္ကန့်ပဲ စမ်းပြထားသည်
-            
-            # Ratio ပြောင်းလဲခြင်း (Crop)
-            w, h = clip.size
-            ratios = {"16:9": 16/9, "9:16": 9/16, "4:5": 4/5}
-            target = ratios[ratio_choice]
-            if w/h > target:
-                clip = clip.crop(x_center=w/2, width=h*target)
+            if video_file and os.path.exists(video_file):
+                try:
+                    # 2. Processing (RAM ချွေတာရန် ၅ စက္ကန့်ပဲ အရင်စမ်းပါ)
+                    clip = VideoFileClip(video_file).subclip(0, 5)
+                    
+                    # 3. Ratio Adjustment
+                    w, h = clip.size
+                    target = {"16:9": 16/9, "9:16": 9/16, "4:5": 4/5}[ratio_choice]
+                    if w/h > target:
+                        clip = clip.crop(x_center=w/2, width=h*target)
+                    else:
+                        clip = clip.crop(y_center=h/2, height=w/target)
+
+                    # 4. Myanmar Voice Generation
+                    st.write("Generating Myanmar Voice...")
+                    asyncio.run(make_voice("မင်္ဂလာပါ၊ ဗီဒီယိုကို မြန်မာဘာသာဖြင့် တင်ဆက်ပေးနေပါသည်။", "mm.mp3"))
+
+                    # 5. Finalize
+                    final_clip = clip.set_audio(None) # မူလအသံဖျောက်
+                    final_clip.write_videofile("out.mp4", codec="libx264", audio_codec="aac")
+
+                    st.video("out.mp4")
+                    st.success("အောင်မြင်စွာ တည်းဖြတ်ပြီးပါပြီ!")
+                except Exception as e:
+                    st.error(f"Processing Error: {str(e)}")
             else:
-                clip = clip.crop(y_center=h/2, height=w/target)
-            
-            # အသံဖိုင်ကို မြန်မာလိုပြောင်းခြင်း (Edge-TTS သုံးသည်)
-            st.write("Generating Myanmar AI Voice...")
-            myanmar_text = "ယခုဗီဒီယိုကို အေအိုင်သုံးပြီး မြန်မာဘာသာသို့ အလိုအလျောက် ပြောင်းလဲပေးထားခြင်း ဖြစ်ပါသည်။"
-            communicate = edge_tts.Communicate(myanmar_text, "my-MM-ThihaNeural")
-            asyncio.run(communicate.save("myanmar_audio.mp3"))
-            
-            # ဗီဒီယိုကို 3s play / 3s freeze လုပ်ခြင်း
-            final_clip = clip.set_audio(None) # မူလအသံဖျောက်
-            mm_audio = edge_tts.Communicate(myanmar_text, "my-MM-ThihaNeural") # Simple version
-            
-            # Output ထုတ်ခြင်း
-            clip.write_videofile("final_video.mp4", codec="libx264")
-            
-            st.video("final_video.mp4")
-            st.success("ပြီးပါပြီ!")
+                st.error("ဗီဒီယိုကို ဒေါင်းလုဒ်ဆွဲ၍ မရပါ။ Link ကို ပြန်စစ်ပေးပါ။")
     else:
-        st.error("Link အရင်ထည့်ပေးပါ")
+        st.warning("Link အရင်ထည့်ပါ။")
